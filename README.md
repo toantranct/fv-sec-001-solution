@@ -1,44 +1,44 @@
-# FV-SEC-001 Test Solution
+# fv-sec-001-solution
 
 TypeScript CLI solution for the `FV-SEC001 - Software Engineer Challenge — Ad Performance Aggregator`.
 
-## What This Does
+## Overview
 
-- Stream-reads a CSV file line by line through a streaming parser
-- Validates rows and skips malformed data safely
-- Aggregates by `campaign_id`
-- Computes `CTR = total_clicks / total_impressions`
-- Computes `CPA = total_spend / total_conversions`
-- Writes:
-  - `results/top10_ctr.csv`
-  - `results/top10_cpa.csv`
+This project processes a large ad-performance CSV using a streaming pipeline and produces two ranked result files:
 
-## Schema Summary
+- `results/top10_ctr.csv`: top 10 campaigns by highest CTR
+- `results/top10_cpa.csv`: top 10 campaigns by lowest CPA
 
-The real dataset inspected locally at `/home/toan/projects/work/fv-sec-001-solution/data/ad_data.csv` uses:
+The implementation is designed for large inputs and does not load the full CSV into memory.
+
+## Input Schema
+
+The expected CSV schema is:
 
 ```csv
 campaign_id,date,impressions,clicks,spend,conversions
 ```
 
-Observed characteristics from local inspection:
+Field definitions:
 
-- Header is present
-- File uses comma delimiters and CRLF line endings
-- Sampled rows are plain, unquoted CSV records
-- File size is about 1.04 GB
-- File contains about 26.8 million data rows plus a header
-- Data currently contains 50 unique campaign IDs
+- `campaign_id`: string
+- `date`: `YYYY-MM-DD`
+- `impressions`: non-negative integer
+- `clicks`: non-negative integer
+- `spend`: non-negative decimal
+- `conversions`: non-negative integer
 
-## Risks And Handling
+## Behavior
 
-- Missing or invalid header: fail fast
-- Malformed rows: skipped safely without terminating the run
-- Invalid numeric values: skipped
-- Invalid dates: skipped
-- Zero impressions: excluded from CTR ranking because CTR is undefined
-- Zero conversions: excluded from CPA ranking and rendered as `null` where applicable
-- Deterministic ranking ties: broken by `campaign_id` ascending
+- Reads the CSV as a stream
+- Validates rows and safely skips malformed records
+- Aggregates totals by `campaign_id`
+- Computes:
+  - `CTR = total_clicks / total_impressions`
+  - `CPA = total_spend / total_conversions`
+- Excludes campaigns with zero impressions from CTR ranking
+- Excludes campaigns with zero conversions from CPA ranking
+- Breaks metric ties by `campaign_id` ascending for deterministic output
 
 ## Project Structure
 
@@ -74,16 +74,10 @@ npm run build
 ## Run
 
 ```bash
-node dist/src/cli.js --input /path/to/ad_data.csv --output ./results
+node dist/src/cli.js --input ./ad_data.csv --output ./results
 ```
 
-Example using the local dataset already available in this workspace:
-
-```bash
-node dist/src/cli.js \
-  --input /home/toan/projects/work/fv-sec-001-solution/data/ad_data.csv \
-  --output /home/toan/projects/work/fv-sec-001-test-solution/results
-```
+If you are using the challenge dataset from the original repository, first unzip `ad_data.csv.zip` and then pass the extracted `ad_data.csv` file to the CLI.
 
 ## Test
 
@@ -93,7 +87,7 @@ npm test
 
 ## Output Format
 
-Both output files use:
+Both output files use this header:
 
 ```csv
 campaign_id,total_impressions,total_clicks,total_spend,total_conversions,CTR,CPA
@@ -106,25 +100,38 @@ Formatting rules:
 - `CPA`: 2 decimal places
 - Undefined CPA values are written as `null`
 
+## Error Handling
+
+- Missing or invalid header: fail fast
+- Malformed rows: skipped safely without terminating the run
+- Invalid numeric values: skipped
+- Invalid dates: skipped
+
 ## Performance Notes
 
 - The CSV reader is fully streaming and does not load the source file into memory.
 - Aggregation keeps only one totals object per campaign in memory.
-- Top-10 ranking is maintained as bounded in-memory lists; it does not perform a full sort over the raw dataset.
+- Top-10 ranking is maintained as bounded in-memory lists instead of sorting the raw dataset.
 
-## Processing Time And Memory
+## Benchmark
 
-- Measured on the local dataset at `/home/toan/projects/work/fv-sec-001-solution/data/ad_data.csv`
+Measured on the full challenge dataset:
+
 - Rows processed: 26,843,544
 - Valid rows: 26,843,544
 - Skipped rows: 0
 - Wall-clock processing time: `1:26.39`
 - Peak memory usage: `90,568 KB` maximum resident set size
 
-Measurement command:
+Example measurement command:
 
 ```bash
-/usr/bin/time -v node dist/src/cli.js \
-  --input /home/toan/projects/work/fv-sec-001-solution/data/ad_data.csv \
-  --output /home/toan/projects/work/fv-sec-001-test-solution/results
+/usr/bin/time -v node dist/src/cli.js --input ./ad_data.csv --output ./results
 ```
+
+## Repository Contents
+
+This repository includes generated result files:
+
+- `results/top10_ctr.csv`
+- `results/top10_cpa.csv`
