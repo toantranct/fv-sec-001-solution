@@ -4,11 +4,13 @@ import { parseArgs as parseNodeArgs } from "node:util";
 import { resolve } from "node:path";
 
 import { aggregateCampaigns, rankTopCpa, rankTopCtr } from "./aggregator";
+import type { ParserMode } from "./csv";
 import { writeMetricsCsv } from "./output";
 
 export interface CliOptions {
   inputPath: string;
   outputDir: string;
+  parserMode: ParserMode;
 }
 
 export interface CliRunResult {
@@ -30,24 +32,36 @@ export function parseArgs(argv: string[]): CliOptions {
       output: {
         type: "string",
       },
+      parser: {
+        type: "string",
+      },
     },
     allowPositionals: false,
   });
 
   if (!values.input || !values.output) {
-    throw new Error("Usage: node dist/src/cli.js --input <path/to/ad_data.csv> --output <dir>");
+    throw new Error(
+      "Usage: node dist/src/cli.js --input <path/to/ad_data.csv> --output <dir> [--parser csv-parse|readline]",
+    );
+  }
+
+  const parserMode = values.parser ?? "csv-parse";
+
+  if (parserMode !== "csv-parse" && parserMode !== "readline") {
+    throw new Error(`Invalid parser: "${parserMode}". Expected "csv-parse" or "readline".`);
   }
 
   return {
     inputPath: resolve(values.input),
     outputDir: resolve(values.output),
+    parserMode,
   };
 }
 
 export async function run(options: CliOptions): Promise<CliRunResult> {
   await access(options.inputPath, constants.R_OK);
 
-  const aggregation = await aggregateCampaigns(options.inputPath);
+  const aggregation = await aggregateCampaigns(options.inputPath, options.parserMode);
   const topCtr = rankTopCtr(aggregation.campaigns.values(), 10);
   const topCpa = rankTopCpa(aggregation.campaigns.values(), 10);
 
@@ -77,6 +91,7 @@ async function main(): Promise<void> {
         `Valid rows: ${result.validRows}`,
         `Skipped rows: ${result.skippedRows}`,
         `Campaigns aggregated: ${result.campaignCount}`,
+        `Parser: ${options.parserMode}`,
         `Wrote: ${result.topCtrPath}`,
         `Wrote: ${result.topCpaPath}`,
       ].join("\n") + "\n",

@@ -1,4 +1,9 @@
-import { streamValidatedRows, type CsvProcessingStats, type ValidatedAdRow } from "./csv";
+import {
+  streamValidatedRows,
+  type CsvProcessingStats,
+  type ParserMode,
+  type ValidatedAdRow,
+} from "./csv";
 
 export interface CampaignTotals {
   campaignId: string;
@@ -102,11 +107,14 @@ function insertTopCampaign(
   }
 }
 
-export async function aggregateCampaigns(inputPath: string): Promise<AggregationResult> {
+export async function aggregateCampaigns(
+  inputPath: string,
+  parserMode: ParserMode = "csv-parse",
+): Promise<AggregationResult> {
   const campaigns = new Map<string, CampaignTotals>();
   const stats = await streamValidatedRows(inputPath, (row) => {
     accumulateCampaignRow(campaigns, row);
-  });
+  }, parserMode);
 
   return {
     ...stats,

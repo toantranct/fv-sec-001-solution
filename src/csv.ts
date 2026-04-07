@@ -1,4 +1,5 @@
 import { createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
 
 import { parse } from "csv-parse";
 
@@ -17,6 +18,8 @@ export interface CsvProcessingStats {
   skippedRows: number;
 }
 
+export type ParserMode = "csv-parse" | "readline";
+
 const EXPECTED_HEADER = [
   "campaign_id",
   "date",
@@ -28,6 +31,39 @@ const EXPECTED_HEADER = [
 
 function normalizeField(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function createStats(): CsvProcessingStats {
+  return {
+    totalRows: 0,
+    validRows: 0,
+    skippedRows: 0,
+  };
+}
+
+function normalizeLine(line: string): string {
+  return line.endsWith("\r") ? line.slice(0, -1) : line;
+}
+
+function splitSimpleCsvLine(line: string): string[] {
+  return normalizeLine(line).split(",");
+}
+
+function handleRecord(
+  columns: string[],
+  stats: CsvProcessingStats,
+  onRow: (row: ValidatedAdRow) => void | Promise<void>,
+): Promise<void> {
+  stats.totalRows += 1;
+  const row = validateRecord(columns);
+
+  if (row === null) {
+    stats.skippedRows += 1;
+    return Promise.resolve();
+  }
+
+  stats.validRows += 1;
+  return Promise.resolve(onRow(row));
 }
 
 function isValidDate(value: string): boolean {
@@ -112,7 +148,7 @@ export function validateRecord(columns: string[]): ValidatedAdRow | null {
   };
 }
 
-export async function streamValidatedRows(
+async function streamValidatedRowsWithCsvParse(
   inputPath: string,
   onRow: (row: ValidatedAdRow) => void | Promise<void>,
 ): Promise<CsvProcessingStats> {
@@ -127,11 +163,7 @@ export async function streamValidatedRows(
   );
 
   let sawHeader = false;
-  const stats: CsvProcessingStats = {
-    totalRows: 0,
-    validRows: 0,
-    skippedRows: 0,
-  };
+  const stats = createStats();
 
   for await (const record of parser as AsyncIterable<string[]>) {
     if (!sawHeader) {
@@ -140,16 +172,7 @@ export async function streamValidatedRows(
       continue;
     }
 
-    stats.totalRows += 1;
-    const row = validateRecord(record);
-
-    if (row === null) {
-      stats.skippedRows += 1;
-      continue;
-    }
-
-    stats.validRows += 1;
-    await onRow(row);
+    await handleRecord(record, stats, onRow);
   }
 
   if (!sawHeader) {
@@ -157,4 +180,56 @@ export async function streamValidatedRows(
   }
 
   return stats;
+}
+
+async function streamValidatedRowsWithReadline(
+  inputPath: string,
+  onRow: (row: ValidatedAdRow) => void | Promise<void>,
+): Promise<CsvProcessingStats> {
+  const input = createReadStream(inputPath, { encoding: "utf8" });
+  const reader = createInterface({
+    input,
+    crlfDelay: Infinity,
+  });
+
+  let sawHeader = false;
+  const stats = createStats();
+
+  try {
+    for await (const rawLine of reader) {
+      const line = normalizeLine(rawLine);
+
+      if (line.trim() === "") {
+        continue;
+      }
+
+      if (!sawHeader) {
+        validateHeader(splitSimpleCsvLine(line).map((value) => normalizeField(value)));
+        sawHeader = true;
+        continue;
+      }
+
+      await handleRecord(splitSimpleCsvLine(line), stats, onRow);
+    }
+  } finally {
+    reader.close();
+  }
+
+  if (!sawHeader) {
+    throw new Error("Input file is empty");
+  }
+
+  return stats;
+}
+
+export async function streamValidatedRows(
+  inputPath: string,
+  onRow: (row: ValidatedAdRow) => void | Promise<void>,
+  parserMode: ParserMode = "csv-parse",
+): Promise<CsvProcessingStats> {
+  if (parserMode === "readline") {
+    return streamValidatedRowsWithReadline(inputPath, onRow);
+  }
+
+  return streamValidatedRowsWithCsvParse(inputPath, onRow);
 }

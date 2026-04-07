@@ -13,7 +13,7 @@ import {
   type CampaignTotals,
 } from "../src/aggregator";
 import { parseArgs, run } from "../src/cli";
-import { validateHeader, validateRecord } from "../src/csv";
+import { streamValidatedRows, validateHeader, validateRecord } from "../src/csv";
 import { formatMetricsRow } from "../src/output";
 
 function createCampaign(campaignId: string, impressions: number, clicks: number, spend: number, conversions: number): CampaignTotals {
@@ -173,12 +173,65 @@ test("aggregateCampaigns streams data and skips invalid rows safely", async () =
   }
 });
 
+test("csv-parse and readline parsers produce identical stats and rows", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "fv-sec-001-test-"));
+
+  try {
+    const inputPath = join(tempDir, "input.csv");
+    await writeFile(
+      inputPath,
+      [
+        "campaign_id,date,impressions,clicks,spend,conversions",
+        "CMP001,2025-01-01,100,10,20.50,2",
+        "CMP001,2025-01-02,150,15,29.50,3",
+        "CMP002,2025-01-01,50,5,10.00,0",
+        "CMP003,2025-01-01,broken,5,10.00,1",
+        "CMP004,2025-02-30,10,1,1.00,1",
+        "CMP005,2025-01-01,10,1,1.00",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const csvParseRows: string[] = [];
+    const readlineRows: string[] = [];
+
+    const csvParseStats = await streamValidatedRows(
+      inputPath,
+      (row) => {
+        csvParseRows.push(JSON.stringify(row));
+      },
+      "csv-parse",
+    );
+    const readlineStats = await streamValidatedRows(
+      inputPath,
+      (row) => {
+        readlineRows.push(JSON.stringify(row));
+      },
+      "readline",
+    );
+
+    assert.deepEqual(readlineStats, csvParseStats);
+    assert.deepEqual(readlineRows, csvParseRows);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("parseArgs validates required flags", () => {
   assert.throws(() => parseArgs([]), /Usage:/);
 
   assert.deepEqual(parseArgs(["--input", "data.csv", "--output", "results"]), {
     inputPath: join(process.cwd(), "data.csv"),
     outputDir: join(process.cwd(), "results"),
+    parserMode: "csv-parse",
+  });
+});
+
+test("parseArgs accepts parser override", () => {
+  assert.deepEqual(parseArgs(["--input", "data.csv", "--output", "results", "--parser", "readline"]), {
+    inputPath: join(process.cwd(), "data.csv"),
+    outputDir: join(process.cwd(), "results"),
+    parserMode: "readline",
   });
 });
 
@@ -200,7 +253,7 @@ test("run writes both result files", async () => {
       "utf8",
     );
 
-    const result = await run({ inputPath, outputDir });
+    const result = await run({ inputPath, outputDir, parserMode: "csv-parse" });
     const topCtr = await readFile(result.topCtrPath, "utf8");
     const topCpa = await readFile(result.topCpaPath, "utf8");
 
@@ -213,6 +266,49 @@ test("run writes both result files", async () => {
     assert.equal(result.validRows, 3);
     assert.equal(result.skippedRows, 0);
     assert.equal(result.campaignCount, 3);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("run writes identical results for readline parser", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "fv-sec-001-test-"));
+
+  try {
+    const inputPath = join(tempDir, "input.csv");
+    const csvParseDir = join(tempDir, "csv-parse-results");
+    const readlineDir = join(tempDir, "readline-results");
+
+    await writeFile(
+      inputPath,
+      [
+        "campaign_id,date,impressions,clicks,spend,conversions",
+        "CMP002,2025-01-01,100,20,30.00,3",
+        "CMP001,2025-01-01,100,20,20.00,2",
+        "CMP003,2025-01-01,100,10,5.00,0",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const csvParseResult = await run({ inputPath, outputDir: csvParseDir, parserMode: "csv-parse" });
+    const readlineResult = await run({ inputPath, outputDir: readlineDir, parserMode: "readline" });
+
+    assert.equal(await readFile(csvParseResult.topCtrPath, "utf8"), await readFile(readlineResult.topCtrPath, "utf8"));
+    assert.equal(await readFile(csvParseResult.topCpaPath, "utf8"), await readFile(readlineResult.topCpaPath, "utf8"));
+    assert.deepEqual(
+      {
+        totalRows: readlineResult.totalRows,
+        validRows: readlineResult.validRows,
+        skippedRows: readlineResult.skippedRows,
+        campaignCount: readlineResult.campaignCount,
+      },
+      {
+        totalRows: csvParseResult.totalRows,
+        validRows: csvParseResult.validRows,
+        skippedRows: csvParseResult.skippedRows,
+        campaignCount: csvParseResult.campaignCount,
+      },
+    );
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
