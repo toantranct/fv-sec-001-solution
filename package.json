@@ -1,5 +1,5 @@
 {
-  "name": "fv-sec-001-test-solution",
+  "name": "fv-sec-001-solution",
   "version": "1.0.0",
   "private": true,
   "description": "Streaming TypeScript CLI for the FV-SEC001 ad performance aggregation challenge",
